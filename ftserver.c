@@ -7,6 +7,7 @@
 
 
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -14,6 +15,8 @@
 #include <netinet/in.h>
 #include <string.h>
 #include <dirent.h>
+#include <arpa/inet.h>
+
 
  // Function prototypes
  void listCommand(int clientSock, int clientDataSock);
@@ -39,10 +42,11 @@ int main(int argc, char* argv[]) {
 	// Loop until user sends SIGINT
 	while(1) {
 		// Set buffers and variables
-		char *buffer = (char*) malloc(1024 * sizeof(char));
-		char *com = (char*) malloc(4 * sizeof(char));
-		char *fileName = (char*) malloc(512 * sizeof(char));
-		char *dataPortNoStr = (char*) malloc(16 * sizeof(char));
+		char buffer[512];
+		char res[1024];
+		char fileName[512];
+		char dataPortNoStr[16];
+		char type[4];
 		int dataPortNo;	
 		int serverDataSock, clientSock, clientDataSock;
 		//printf("server running on port %d\n", portNo);
@@ -52,65 +56,62 @@ int main(int argc, char* argv[]) {
 			perror("connecting");
 			break;
 		}
+		printf("connected to the client");
 
-		
-		// Get the command from the client
-		if(read(clientSock,buffer, sizeof(buffer)) == -1) {
-			perror("could not get command from client\n");
+		memset(buffer, '\0', 512);
+		memset(type, '\0', 4);
+		memset(fileName, '\0', 512);
+		memset(dataPortNoStr, '\0', 16);
+		memset(res, '\0', 1024);
+
+		if(read(clientSock, buffer, sizeof(buffer)) < 0) {
+			perror("error reading command");
 			exit(1);
 		}
 
 		printf("buffer contents %s\n", buffer);
 		char *temp;
 		temp = strtok(buffer, " \n\0");
-		strcpy(com, temp);
-		printf("com: %s", com);
+		strcpy(type, temp);
+		printf("com: %s\n", type);
 		temp = strtok(NULL, " \n\0");
 		strcpy(dataPortNoStr, temp);
 		dataPortNo = atoi(temp);
-		if(com[1] == 'g') {
+		if(type[0] == 'g') {
 			printf("parsing the filename\n");
-			temp = (char*) strtok(NULL, " \n\0");
+			temp = strtok(NULL, " \n\0");
 			strcpy(fileName, temp);
 		}
 
 		// Set up the data socket
 		serverDataSock =  setSocket(dataPortNo);
-		printf("5\n");
 		clientDataSock = connectSocket(serverDataSock);
 
-	
-		// send confirmation messagge to client
-		char *dirMessage = "OK";
-		int writeStatus;
-		writeStatus = write(clientSock, dirMessage, strlen(dirMessage));
-		if(writeStatus < 0) {
-			perror("sending confirmation message");
-			exit(1);
-		}
-
-		
-
-
 		// Call appropriate functions based on command
-		if(com[1] == 'l') {
+		if(type[0] == 'l') {
 				printf("calling list command");
 				listCommand(clientSock, clientDataSock);
 		}
-		else if(com[1] == 'g') {
+		else if(type[0] == 'g') {
 			printf("calling get command");
 			getCommand(clientSock, clientDataSock, fileName);
 		}
+		else {
+			strcpy(res, "unknown command");
+			if(write(clientSock, res, sizeof(res)) < 0) {
+				perror("error sending error message");
+			}
+		}
 		close(clientDataSock);
-		close(clientSock);
 		close(serverDataSock);
+		close(clientSock);
 		
 	}
 	return 0;
 }
 
 int setSocket(int port) {
-	printf("1\n");
+
 	int socketNum;
 	int one = 1;
 	struct sockaddr_in sa;
@@ -127,19 +128,17 @@ int setSocket(int port) {
 	sa.sin_addr.s_addr = htonl(INADDR_ANY);
 	sa.sin_port = htons(port);
 
-	printf("2\n");
+
 	if(setsockopt(socketNum, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(int)) == -1) {
 		perror("setsocketopt");
 		exit(1);
 	}
 
-	printf("3\n");
 	if(bind(socketNum, (struct sockaddr*) &sa, sizeof(struct sockaddr_in)) < 0) {
 			printf("Error binding the socket\n");
 			exit(1);
 	}
 
-	printf("listening on port: %d\n", port);
 	if(listen(socketNum, 10) == -1) {
 		perror("listen");
 		exit(1);
@@ -159,44 +158,48 @@ int connectSocket(int socket) {
 		return -1;
 	}
 	else {
+		printf("client connected");
 		return clientSocket;
 	}
+
 
 }
 
 
 void listCommand(int clientSock, int clientDataSock) {
-
-
-	printf("sending file");
 	// Allocate memory for the message to to be sent
-	char *send = (char*) malloc(1024 * sizeof(char));
+	char send[1024];
+	memset(send, '\0', 1024);
+	char *ok = "OK";
+	if(write(clientSock, ok, strlen(ok)) < 0) {
+		perror("error sending OK response");
+	}
 
 	// http://pubs.opengroup.org/onlinepubs/009695399/functions/opendir.html
 	DIR *dir;
 	struct dirent *dp;
 
 	// Get current directory 
-	if((dir = opendir(".")) == NULL) {
-		perror("error opening directory");
-		exit(1);
+	dir = opendir(".");
+	if(dir) {
+		// Get the contents of the current directory
+		while((dp = readdir(dir)) != NULL) {
+			strcat(send, dp->d_name);
+			strcat(send, "\n");
+		}
 	}
-
-	// Get the contents of the current directory
-	while((dp = readdir(dir)) != NULL) {
-		strcat(send, dp->d_name);
-		strcat(send, "\n");
-	}
+	
 	closedir(dir);
 
-	if(strlen(send) < 1) {
+	if(strlen(send) <= 1) {
 		strcpy(send, "The directory is empty");
+
 	}
 
 	if(write(clientDataSock, send, strlen(send)) < 0) {
 		perror("error sending directory contents");
 	}
-	free(send);
+
 	printf("done sending directory");
 }
 
@@ -211,22 +214,13 @@ void getCommand(int clientSock, int clientDataSock, char *fileName) {
 	FILE* fp;
 	if((fp = fopen(fileName, "r")) == NULL) {
 		// send message that file was not found
-		if(write(clientSock, fnf, strlen(fnf)) < 0) {
-			perror("writing file send message");
-		}
-	}
+		perror("writing file send message");
 
-	// If file was succesfully opened
-	else {
-		if(write(clientSock, ff, strlen(ff)) < 0) {
-			perror("writing file send message");
-			exit(1);
-		}
 	}
 
 	int read;
 	do {
-		if((read = fread(buf, sizeof(buf), 1, fp)) < 0) {
+		if((read = fread(buf, 1, 512, fp)) < 0) {
 			perror("reading from file");
 		}
 		if(write(clientDataSock, buf, read) < 0) {

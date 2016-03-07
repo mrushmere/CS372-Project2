@@ -5,15 +5,12 @@
 # Project 2
 # File Transfer client sends commands to ftserver (ftserver.c)
 
-
-
-
 import sys
 import socket
 import time
 import getopt
+import os
 
-BUFFER_SIZE = 1024
 
 def main():
 
@@ -45,71 +42,21 @@ def main():
 			com = "g" + " " + serverDataPort + " " + fileName
 			print(com)
 		else:
-			print("Invalid option")
+			fileName = "nofilename"
+			print("Invalid filename")
 
 	# Set up server socket
 	serverSock = setSocket(serverName, serverPort)
-		
 	# Send the command
-	serverSock.send(com)
-
-	serverDataSock = setSocket(serverName, serverDataPort)
-
-	# get response from server 
-	res = serverSock.recv(512)
-
-	if res != 'OK':
-		print "invalid command sent"
-	else:
-		print "response OK received"
-		# Set up data socket
-		resHandler(serverSock, serverDataSock, com, fileName)
-
+	sendCom(serverSock, com, serverName, serverDataPort, fileName)
+	# Close first socket
 	serverSock.close()
 
-
-
-def resHandler(serverSock, serverDataSock, com, fileName):
-	print "in resHandler"
-	if(com[0] == "l"):
-		print "list command\n"
-		directory = ''
-		buf = '\n'
-		while buf != '':
-			buf = serverDataSock.recv(BUFFER_SIZE)
-			directory += buf
-		print(directory)
-
-
-	elif(com[0] == "g"):
-		print "get command\n"
-		print "receiving" + '"' + fileName + '"'
-		contents = ''
-		buf = '\n'
-		while buf != '':
-			buf = serverDataSock.recv(BUFFER_SIZE)
-			contents += buf
-		with open(fileName, "w") as f:
-			f.write(contents)
-
-
-	else:
-		print("error")
-		fContents = ""
-		buf = "\n"
-		while buf != "":
-			buf = serverDataSock.recv(BUFFER_SIZE)
-			fContents += buf
-		with open(fileName, "w") as f:
-			f.write(fContents)
-		f.close()
-		print "transfer complete"
-	serverDataSock.close()
 
 def setSocket(host, port):
 	serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 	serverSocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-	time.sleep(0.1)
+	time.sleep(1)
 	try:
 		serverSocket.connect((host, int(port)))
 		print("connected successfully")
@@ -120,6 +67,40 @@ def setSocket(host, port):
 	print("socket set successfully")
 	return serverSocket
 
+def sendCom(socket, command, name, dataPort, fileName):
+	socket.send(command)
+	serverDataSock = setSocket(name, dataPort)
+	res = socket.recv(512)
+	if res != 'OK':
+		print(res) # Error message from server
+	else:
+		if command[0] == 'l':
+			listCom(serverDataSock)
+		elif command[0] == 'g':
+			fileCom(serverDataSock, fileName)
+	serverDataSock.close()
+
+def listCom(serverDataSock):
+	print "list command\n"
+	directory = ''
+	buf = '\n'
+	while buf != '':
+		buf = serverDataSock.recv(1024)
+		directory += buf
+	print(directory)
+
+def fileCom(serverDataSock, fileName):
+	for file in os.listdir('.'):
+		if file == fileName:
+			fileName += "duplicate"
+
+	contents = ''
+	buf = '\n'
+	while buf != '':
+		buf = serverDataSock.recv(1024)
+		contents += buf
+	with open(fileName, "w") as f:
+		f.write(contents)
 
 
 if __name__ == "__main__":
